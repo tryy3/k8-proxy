@@ -19,7 +19,11 @@ var (
 
 func main() {
 	flag.Parse()
+	authKey := getAuthKey()
+
 	srv := new(tsnet.Server)
+	srv.AuthKey = authKey
+
 	defer srv.Close()
 	ln, err := srv.Listen("tcp", *addr)
 	if err != nil {
