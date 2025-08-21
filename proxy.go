@@ -2,12 +2,17 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"strings"
 	"sync"
+	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	"tailscale.com/tsnet"
 )
 
@@ -15,6 +20,7 @@ type ProxyService struct {
 	srv        *tsnet.Server
 	targetIP   string      // Change to dynamic IP where we continously look at kubernetes
 	listenPort []ProxyPort // Maybe multiple ports?
+	clientset  *kubernetes.Clientset
 }
 
 type ProxyPort struct {
@@ -22,10 +28,11 @@ type ProxyPort struct {
 	LocalPort  string
 }
 
-func NewProxyService(srv *tsnet.Server) *ProxyService {
+func NewProxyService(srv *tsnet.Server, clientset *kubernetes.Clientset) *ProxyService {
 	return &ProxyService{
-		srv:      srv,
-		targetIP: "10.10.0.100",
+		srv:       srv,
+		targetIP:  "10.10.0.100",
+		clientset: clientset,
 		listenPort: []ProxyPort{
 			{
 				RemotePort: "443",
@@ -36,6 +43,35 @@ func NewProxyService(srv *tsnet.Server) *ProxyService {
 }
 
 func (p *ProxyService) Start() {
+	go func() {
+		for {
+			pods, err := p.clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
+			if err != nil {
+				panic(err.Error())
+			}
+			fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
+
+			// Examples for error handling:
+			// - Use helper functions like e.g. errors.IsNotFound()
+			// - And/or cast to StatusError and use its properties like e.g. ErrStatus.Message
+			namespace := "default"
+			pod := "dnsutils"
+			_, err = p.clientset.CoreV1().Pods(namespace).Get(context.TODO(), pod, metav1.GetOptions{})
+			if errors.IsNotFound(err) {
+				fmt.Printf("Pod %s in namespace %s not found\n", pod, namespace)
+			} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
+				fmt.Printf("Error getting pod %s in namespace %s: %v\n",
+					pod, namespace, statusError.ErrStatus.Message)
+			} else if err != nil {
+				panic(err.Error())
+			} else {
+				fmt.Printf("Found pod %s in namespace %s\n", pod, namespace)
+			}
+
+			time.Sleep(10 * time.Second)
+		}
+	}()
+
 	go p.StartTailscaleListener()
 }
 

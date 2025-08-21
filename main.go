@@ -6,23 +6,47 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"path/filepath"
 	"strings"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/homedir"
 	"tailscale.com/tsnet"
 )
 
 var (
-	addr = flag.String("addr", ":80", "address to listen on")
+	addr           = flag.String("addr", ":80", "address to listen on")
+	kubeConfigPath *string
 )
 
 func main() {
+	if home := homedir.HomeDir(); home != "" {
+		kubeConfigPath = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+	} else {
+		kubeConfigPath = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
+	}
+
 	flag.Parse()
+	log.Println("kubeConfigPath", *kubeConfigPath)
 	authKey := getAuthKey()
 
 	srv := new(tsnet.Server)
 	srv.AuthKey = authKey
 
-	proxyService := NewProxyService(srv)
+	// use the current context in kubeconfig
+	kubeConfig, err := clientcmd.BuildConfigFromFlags("", *kubeConfigPath)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	// create the clientset
+	clientset, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	proxyService := NewProxyService(srv, clientset)
 	proxyService.Start()
 
 	select {}
