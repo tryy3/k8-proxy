@@ -2,52 +2,34 @@ package main
 
 import (
 	"context"
-	"log"
-	"os"
+	"fmt"
 
-	"github.com/joho/godotenv"
+	"github.com/spf13/viper"
 	"tailscale.com/client/tailscale/v2"
 )
 
-type ConfigData struct {
-	AuthKey      string
-	ClientID     string
-	ClientSecret string
-}
-
-var Config *ConfigData
-
-func init() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
-	Config = &ConfigData{
-		AuthKey:      os.Getenv("TAILSCALE_AUTH_KEY"),
-		ClientID:     os.Getenv("TAILSCALE_CLIENT_ID"),
-		ClientSecret: os.Getenv("TAILSCALE_CLIENT_SECRET"),
-	}
-}
-
-func getAuthKey() string {
-	authKey := Config.AuthKey
-	if Config.ClientID != "" && Config.ClientSecret != "" {
-		authKey = getOAuthKey()
+func getAuthKey() (string, error) {
+	var err error
+	authKey := viper.GetString("tailscale.auth_key")
+	if viper.GetString("tailscale.client_id") != "" && viper.GetString("tailscale.client_secret") != "" {
+		authKey, err = getOAuthKey()
+		if err != nil {
+			return "", fmt.Errorf("Error getting OAuth key: %w", err)
+		}
 	}
 
 	if authKey == "" {
-		authKey = Config.AuthKey
+		authKey = viper.GetString("tailscale.auth_key")
 	}
 
-	return authKey
+	return authKey, nil
 }
 
-func getOAuthKey() string {
+func getOAuthKey() (string, error) {
 	ctx := context.Background()
 	oauthConfig := tailscale.OAuthConfig{
-		ClientID:     Config.ClientID,
-		ClientSecret: Config.ClientSecret,
+		ClientID:     viper.GetString("tailscale.client_id"),
+		ClientSecret: viper.GetString("tailscale.client_secret"),
 		Scopes:       []string{"auth_keys"},
 	}
 	tsclient := &tailscale.Client{
@@ -60,7 +42,7 @@ func getOAuthKey() string {
 	capabilities.Devices.Create.Ephemeral = false
 	capabilities.Devices.Create.Reusable = false
 	capabilities.Devices.Create.Preauthorized = true
-	capabilities.Devices.Create.Tags = []string{"tag:example"}
+	capabilities.Devices.Create.Tags = viper.GetStringSlice("tailscale.tags")
 
 	ckr := tailscale.CreateKeyRequest{
 		Capabilities: capabilities,
@@ -69,8 +51,8 @@ func getOAuthKey() string {
 
 	authKey, err := tsclient.Keys().Create(ctx, ckr)
 	if err != nil {
-		log.Fatal("Error creating auth key: ", err)
+		return "", fmt.Errorf("Error creating auth key: %w", err)
 	}
 
-	return authKey.Key
+	return authKey.Key, nil
 }

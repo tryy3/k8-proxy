@@ -2,109 +2,52 @@
 package main
 
 import (
-	"flag"
-	"log"
-	"net/http"
-	"net/http/httputil"
-	"path/filepath"
-	"strings"
+	"log/slog"
+	"os"
 
+	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
 	"tailscale.com/tsnet"
 )
 
-var (
-	addr           = flag.String("addr", ":80", "address to listen on")
-	kubeConfigPath *string
-)
+func init() {
+	initConfig()
+}
 
 func main() {
-	if home := homedir.HomeDir(); home != "" {
-		kubeConfigPath = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeConfigPath = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
+	kubeConfigPath := viper.GetString("kube-config")
 
-	flag.Parse()
-	log.Println("kubeConfigPath", *kubeConfigPath)
-	authKey := getAuthKey()
+	slog.Info("kubeConfigPath", "path", kubeConfigPath)
+	authKey, err := getAuthKey()
+	if err != nil {
+		slog.Error("Error getting auth key", "error", err)
+		os.Exit(1)
+	}
 
 	srv := new(tsnet.Server)
 	srv.AuthKey = authKey
 
 	// use the current context in kubeconfig
-	kubeConfig, err := clientcmd.BuildConfigFromFlags("", *kubeConfigPath)
+	kubeConfig, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
-		panic(err.Error())
+		slog.Error("Error building kube config", "error", err)
+		os.Exit(1)
 	}
 
 	// create the clientset
 	clientset, err := kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
-		panic(err.Error())
+		slog.Error("Error creating clientset", "error", err)
+		os.Exit(1)
 	}
 
-	proxyService := NewProxyService(srv, clientset)
+	proxyService, err := NewProxyService(srv, clientset)
+	if err != nil {
+		slog.Error("Error creating proxy service", "error", err)
+		os.Exit(1)
+	}
 	proxyService.Start()
 
 	select {}
-
-	// defer srv.Close()
-	// ln, err := srv.Listen("tcp", *addr)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// defer ln.Close()
-
-	// lc, err := srv.LocalClient()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// if *addr == ":443" {
-	// 	ln = tls.NewListener(ln, &tls.Config{
-	// 		GetCertificate: lc.GetCertificate,
-	// 	})
-	// }
-
-	// remote, err := url.Parse("https://www.whatismyip.com/")
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// director := func(req *http.Request) {
-	// 	req.URL.Scheme = remote.Scheme
-	// 	req.URL.Host = remote.Host
-	// }
-
-	// proxy := &httputil.ReverseProxy{
-	// 	Director: director,
-	// }
-
-	// handler := handler{proxy: proxy}
-
-	// http.Handle("/", handler)
-	// // err = http.ListenAndServe(*addr, nil)
-	// // if err != nil {
-	// // 	log.Fatal(err)
-	// // }
-
-	// log.Fatal(http.Serve(ln, nil))
-}
-
-func firstLabel(s string) string {
-	s, _, _ = strings.Cut(s, ".")
-	return s
-}
-
-type handler struct {
-	proxy *httputil.ReverseProxy
-}
-
-func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Println(r.URL)
-
-	h.proxy.ServeHTTP(w, r)
 }

@@ -4,23 +4,23 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
-	"time"
 
-	"k8s.io/apimachinery/pkg/api/errors"
+	"github.com/spf13/viper"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"tailscale.com/tsnet"
 )
 
 type ProxyService struct {
-	srv        *tsnet.Server
-	targetIP   string      // Change to dynamic IP where we continously look at kubernetes
-	listenPort []ProxyPort // Maybe multiple ports?
-	clientset  *kubernetes.Clientset
+	srv              *tsnet.Server
+	traefikIP        string // Change to dynamic IP where we continously look at kubernetes
+	traefikNamespace string
+	listenPort       []ProxyPort // Maybe multiple ports?
+	clientset        *kubernetes.Clientset
 }
 
 type ProxyPort struct {
@@ -28,50 +28,22 @@ type ProxyPort struct {
 	LocalPort  string
 }
 
-func NewProxyService(srv *tsnet.Server, clientset *kubernetes.Clientset) *ProxyService {
-	return &ProxyService{
-		srv:       srv,
-		targetIP:  "10.10.0.100",
-		clientset: clientset,
-		listenPort: []ProxyPort{
-			{
-				RemotePort: "443",
-				LocalPort:  "443",
-			},
-		},
+func NewProxyService(srv *tsnet.Server, clientset *kubernetes.Clientset) (*ProxyService, error) {
+	var configProxyPort []ProxyPort
+	err := viper.UnmarshalKey("proxy.ports", &configProxyPort)
+	if err != nil {
+		return nil, fmt.Errorf("Error unmarshalling proxy ports: %w", err)
 	}
+
+	return &ProxyService{
+		srv:              srv,
+		clientset:        clientset,
+		traefikNamespace: viper.GetString("traefik.namespace"),
+		listenPort:       configProxyPort,
+	}, nil
 }
 
 func (p *ProxyService) Start() {
-	go func() {
-		for {
-			pods, err := p.clientset.CoreV1().Pods("").List(context.TODO(), metav1.ListOptions{})
-			if err != nil {
-				panic(err.Error())
-			}
-			fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
-
-			// Examples for error handling:
-			// - Use helper functions like e.g. errors.IsNotFound()
-			// - And/or cast to StatusError and use its properties like e.g. ErrStatus.Message
-			namespace := "default"
-			pod := "dnsutils"
-			_, err = p.clientset.CoreV1().Pods(namespace).Get(context.TODO(), pod, metav1.GetOptions{})
-			if errors.IsNotFound(err) {
-				fmt.Printf("Pod %s in namespace %s not found\n", pod, namespace)
-			} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
-				fmt.Printf("Error getting pod %s in namespace %s: %v\n",
-					pod, namespace, statusError.ErrStatus.Message)
-			} else if err != nil {
-				panic(err.Error())
-			} else {
-				fmt.Printf("Found pod %s in namespace %s\n", pod, namespace)
-			}
-
-			time.Sleep(10 * time.Second)
-		}
-	}()
-
 	go p.StartTailscaleListener()
 }
 
@@ -79,11 +51,11 @@ func (p *ProxyService) StartTailscaleListener() {
 	for _, port := range p.listenPort {
 		ln, err := p.srv.Listen("tcp", ":"+port.LocalPort)
 		if err != nil {
-			log.Fatal("Tailscale listener error: ", err)
+			slog.Error("Tailscale listener error: ", "error", err)
 		}
 		defer ln.Close()
 
-		log.Println("Tailscale listener started on port ", port.LocalPort)
+		slog.Info("Tailscale listener started on port ", "port", port.LocalPort)
 		p.handleConnections(ln)
 	}
 }
@@ -92,7 +64,7 @@ func (p *ProxyService) handleConnections(ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Fatal("Accept error: ", err)
+			slog.Error("Accept error: ", "error", err)
 		}
 
 		go p.proxyConnection(conn)
@@ -117,16 +89,62 @@ func (p *ProxyService) mapLocalPortToRemotePort(addr string) string {
 	return ""
 }
 
+func (p *ProxyService) getTraefikServiceIP() (string, error) {
+	if p.traefikIP != "" {
+		return p.traefikIP, nil
+	}
+
+	svc, err := p.clientset.CoreV1().Services(p.traefikNamespace).Get(context.Background(), viper.GetString("traefik.service"), metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("Error getting traefik service: %w", err)
+	}
+
+	if len(svc.Status.LoadBalancer.Ingress) == 0 {
+		return "", fmt.Errorf("No external IP found for traefik service")
+	}
+
+	p.traefikIP = svc.Status.LoadBalancer.Ingress[0].IP
+	return p.traefikIP, nil
+}
+
+func (p *ProxyService) getBackendConnection(targetPort string) (net.Conn, error) {
+	// First check if we have a cached connection
+	// If not, attempt to retrieve from kubernetes
+	// Then try to connect to server, if failed do 1 more
+	// reason being if cached then kubernetes might have switched over
+	// if it's first time, then it's fine to try 1 more time
+	svcIP, err := p.getTraefikServiceIP()
+	if err != nil {
+		return nil, fmt.Errorf("Error getting traefik service IP: %w", err)
+	}
+
+	// Try to connect to the service
+	slog.Info("Dialing traefik service ", "service", svcIP+":"+targetPort)
+	conn, err := p.srv.Dial(context.Background(), "tcp", svcIP+":"+targetPort)
+	if err != nil {
+		// Try one more time
+		svcIP, err = p.getTraefikServiceIP()
+		slog.Info("Second attempt to get traefik service IP: ", "service", svcIP)
+		if err != nil {
+			return nil, fmt.Errorf("Error getting traefik service IP: %w", err)
+		}
+
+		conn, err = p.srv.Dial(context.Background(), "tcp", svcIP+":"+targetPort)
+		if err != nil {
+			return nil, fmt.Errorf("Error connecting to traefik service: %w", err)
+		}
+	}
+	return conn, nil
+}
+
 func (p *ProxyService) proxyConnection(conn net.Conn) {
 	defer conn.Close()
-	log.Println("New connection from ", conn.RemoteAddr(), conn.LocalAddr())
+	slog.Info("New connection", "remote", conn.RemoteAddr(), "local", conn.LocalAddr())
 	remotePort := p.mapLocalPortToRemotePort(conn.LocalAddr().String())
 
-	// TODO: maybe use connection check here, cache latest connection and if failed
-	// retrieve new IP from kubernetes
-	backendConn, err := p.srv.Dial(context.Background(), "tcp", p.targetIP+":"+remotePort)
+	backendConn, err := p.getBackendConnection(remotePort)
 	if err != nil {
-		log.Fatal("Dial error: ", err)
+		slog.Error("Error getting backend connection: ", "error", err)
 	}
 	defer backendConn.Close()
 
