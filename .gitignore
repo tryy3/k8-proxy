@@ -1,3 +1,5 @@
 .env
 .kube
 config.json
+# Added by goreleaser init:
+dist/
