@@ -3,7 +3,9 @@ run-name: ${{ github.actor }} is releasing 🚀
 
 on:
   push:
-    branches: [ main ]
+    # run only against tags
+    tags:
+      - "*"
   workflow_dispatch:
 
 jobs:
@@ -24,7 +26,7 @@ jobs:
         with:
           go-version: 1.24
 
-      - name: Login to harbor registry
+      - name: Login to github registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -35,6 +37,6 @@ jobs:
         uses: goreleaser/goreleaser-action@v6.3.0
         with:
           version: latest
-          args: --clean --skip=validate --verbose --snapshot
+          args: --clean --skip=validate --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

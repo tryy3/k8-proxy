@@ -74,7 +74,7 @@ dockers:
       - "--build-arg=TARGETARCH=amd64"
     dockerfile: Dockerfile
     image_templates:
-      - github.com/tryy3/k8-proxy:v{{ .Version }}-amd64
+      - ghcr.io/tryy3/k8-proxy:v{{ .Version }}-amd64
   - goos: linux
     goarch: arm64
     use: buildx
@@ -84,13 +84,13 @@ dockers:
       - "--build-arg=TARGETARCH=arm64"
     dockerfile: Dockerfile
     image_templates:
-      - github.com/tryy3/k8-proxy:v{{ .Version }}-arm64v8
+      - ghcr.io/tryy3/k8-proxy:v{{ .Version }}-arm64v8
 docker_manifests:
-  - name_template: github.com/tryy3/k8-proxy:v{{ .Version }}
+  - name_template: ghcr.io/tryy3/k8-proxy:v{{ .Version }}
     image_templates:
-      - github.com/tryy3/k8-proxy:v{{ .Version }}-amd64
-      - github.com/tryy3/k8-proxy:v{{ .Version }}-arm64v8
-  - name_template: github.com/tryy3/k8-proxy:latest
+      - ghcr.io/tryy3/k8-proxy:v{{ .Version }}-amd64
+      - ghcr.io/tryy3/k8-proxy:v{{ .Version }}-arm64v8
+  - name_template: ghcr.io/tryy3/k8-proxy:latest
     image_templates:
-      - github.com/tryy3/k8-proxy:v{{ .Version }}-amd64
-      - github.com/tryy3/k8-proxy:v{{ .Version }}-arm64v8
+      - ghcr.io/tryy3/k8-proxy:v{{ .Version }}-amd64
+      - ghcr.io/tryy3/k8-proxy:v{{ .Version }}-arm64v8
