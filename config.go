@@ -37,7 +37,8 @@ func initConfig() {
 
 	viper.SetConfigName("config") // name of config file (without extension)
 	viper.SetConfigType("json")   // REQUIRED if the config file does not have the extension in the name
-	viper.AddConfigPath(".")      // optionally look for config in the working directory// Try to read the config file
+	viper.AddConfigPath("/config")
+	viper.AddConfigPath(".") // optionally look for config in the working directory// Try to read the config file
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {

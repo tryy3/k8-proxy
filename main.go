@@ -36,7 +36,7 @@ func main() {
 	}
 
 	// create the clientset
-	clientset, err := kubernetes.NewForConfig(kubeConfig)
+	clientset, err := kubernetes.NewForConfigAndClient(kubeConfig, srv.HTTPClient())
 	if err != nil {
 		slog.Error("Error creating clientset", "error", err)
 		os.Exit(1)

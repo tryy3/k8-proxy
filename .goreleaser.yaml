@@ -61,3 +61,33 @@ release:
     ---
 
     Released by [GoReleaser](https://github.com/goreleaser/goreleaser).
+dockers:
+  - goos: linux
+    goarch: amd64
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--build-arg=TARGETOS=linux"
+      - "--build-arg=TARGETARCH=amd64"
+    dockerfile: Dockerfile
+    image_templates:
+      - github.com/tryy3/k8-proxy:v{{ .Version }}-amd64
+  - goos: linux
+    goarch: arm64
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64/v8"
+      - "--build-arg=TARGETOS=linux"
+      - "--build-arg=TARGETARCH=arm64"
+    dockerfile: Dockerfile
+    image_templates:
+      - github.com/tryy3/k8-proxy:v{{ .Version }}-arm64v8
+docker_manifests:
+  - name_template: github.com/tryy3/k8-proxy:v{{ .Version }}
+    image_templates:
+      - github.com/tryy3/k8-proxy:v{{ .Version }}-amd64
+      - github.com/tryy3/k8-proxy:v{{ .Version }}-arm64v8
+  - name_template: github.com/tryy3/k8-proxy:latest
+    image_templates:
+      - github.com/tryy3/k8-proxy:v{{ .Version }}-amd64
+      - github.com/tryy3/k8-proxy:v{{ .Version }}-arm64v8
